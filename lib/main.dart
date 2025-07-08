@@ -17,7 +17,7 @@ class MyApp extends StatelessWidget {
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
       ),
-      home: const MyHomePage(),
+      home: const isLeapYear(),
     );
   }
 }
@@ -95,6 +95,67 @@ class _MyHomePageState extends State<MyHomePage> {
           ),
           ListTile(title: Text("湿度"), subtitle: Text(humidity.toString())),
         ],
+      ),
+    );
+  }
+}
+
+class isLeapYear extends StatefulWidget {
+  const isLeapYear({super.key});
+
+  @override
+  State<isLeapYear> createState() => _isLeapYearState();
+}
+
+class _isLeapYearState extends State<isLeapYear> {
+  int year = 0;
+  TextEditingController textEditingController = TextEditingController();
+  String LeapYear = "";
+
+  @override
+  void dispose() {
+    textEditingController.dispose();
+    super.dispose();
+  }
+
+  Future<void> isLeapYearResult(value) async {
+    int? year = int.tryParse(value);
+    if (year == null){
+      setState(() {
+        LeapYear = "入力が正しくありません";
+      });
+    }
+    else if ((year % 400 == 0)||(year % 4 == 0 && year % 100 != 0)) {
+      setState(() {
+        LeapYear = "閏年";
+      });
+    }else{
+      setState(() {
+        LeapYear = "閏年ではない";
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: Text("閏年")),
+      body: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            TextField(
+              controller: textEditingController,
+              keyboardType: TextInputType.number,
+              onChanged: (value) {
+                if (value.isNotEmpty) {
+                  isLeapYearResult(value);
+                }
+              },
+            ),
+            Text("$LeapYear")
+          ],
+        ),
       ),
     );
   }
