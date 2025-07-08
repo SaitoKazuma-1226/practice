@@ -86,7 +86,7 @@ class _MyHomePageState extends State<MyHomePage> {
           ListTile(title: Text("天気"), subtitle: Text(weather)),
           ListTile(title: Text("温度"), subtitle: Text(temperature.toString())),
           ListTile(
-            title: Text("最高気温"),
+            title: Text("最高温度"),
             subtitle: Text(maxTemperature.toString()),
           ),
           ListTile(
