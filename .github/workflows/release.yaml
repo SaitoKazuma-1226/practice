@@ -1,0 +1,117 @@
+name: Auto Release on Main Merge # このワークフローの名前 (GitHub ActionsのUIで表示される)
+
+on:
+  # このワークフローが「いつ」実行されるかを定義します。
+  # 最終的には main ブランチへのプッシュで動かしたいですが、
+  # まずは手動テストができるように設定します。
+
+  # (後で有効にする) main ブランチへのプッシュ（マージを含む）があったらトリガー
+  # push:
+  #   branches:
+  #     - main
+
+  # GitHub ActionsのUIから手動で実行できるようにする設定 (テスト用)
+  workflow_dispatch:
+    inputs:
+      # バージョン番号を自分で指定したい場合に入力 (例: v1.0.0, v2.1.5)
+      version_override:
+        description: '次のバージョンを指定します (例: v1.0.0)。空欄の場合、自動でパッチバージョンをインクリメントします。'
+        required: false # 入力は必須ではない
+        type: string    # 文字列型
+
+      # リリースを作成する対象ブランチ (テスト用。通常は main)
+      release_branch:
+        description: 'リリースを作成する対象ブランチ (例: main, test-release)。デフォルトは main です。'
+        required: false
+        default: 'main' # デフォルト値は main にしておく
+        type: string
+
+# 実行するジョブ (タスク) を定義します
+jobs:
+  create_release:
+    # このジョブを実行する環境 (仮想マシン)
+    runs-on: ubuntu-latest
+    # このジョブが必要とする権限 (リリースとタグ作成のために必要)
+    permissions:
+      contents: write
+
+    # ジョブの中で実行するステップ (具体的な処理) を定義します
+    steps:
+      # 1. コードをチェックアウト (GitHub Actionsの標準アクション)
+      - name: Checkout code
+        uses: actions/checkout@v4 # コードをワークフローの実行環境に持ってくる
+        with:
+          fetch-depth: 0 # 全てのコミット履歴とタグを確実に取得するために必要
+
+      # 2. 最新のバージョン番号を計算し、次のバージョンを決定する
+      - name: Get latest version and calculate next version
+        id: get_version # このステップにIDをつけ、出力にアクセスできるようにする
+        run: |
+          # 手動実行時の入力からリリース対象ブランチを取得。なければ 'main' を使う。
+          RELEASE_BRANCH="${{ github.event.inputs.release_branch || 'main' }}"
+          echo "対象ブランチ: $RELEASE_BRANCH"
+
+          # リリース対象のブランチをチェックアウトする
+          git checkout $RELEASE_BRANCH
+
+          # 最新の vX.Y.Z 形式のタグを見つける
+          # --sort=-v:refname でバージョン番号順にソート (降順)
+          # grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' で vX.Y.Z のパターンに合うものだけをフィルタリング
+          # head -n 1 で一番上の (最新の) タグを取得
+          LATEST_TAG=$(git tag --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -n 1)
+
+          NEXT_VERSION="" # 次のバージョンを格納する変数
+
+          # === バージョン番号の決定ロジック ===
+          # ユーザーがバージョンを明示的に指定した場合 (workflow_dispatchの入力)
+          if [ -n "${{ github.event.inputs.version_override }}" ]; then
+            OVERRIDE_VERSION="${{ github.event.inputs.version_override }}"
+            # 指定されたバージョンが vX.Y.Z 形式かバリデーション
+            if [[ ! "$OVERRIDE_VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo "Error: 指定されたバージョン '$OVERRIDE_VERSION' は vX.Y.Z 形式ではありません。"
+              exit 1 # エラーでワークフローを終了させる
+            fi
+            NEXT_VERSION="$OVERRIDE_VERSION"
+            echo "オーバーライドされたバージョン: $NEXT_VERSION を使用します。"
+          # 既存のタグが見つかった場合 (自動インクリメント)
+          elif [ -n "$LATEST_TAG" ]; then
+            # 最新タグからメジャー、マイナー、パッチの各番号を抽出
+            MAJOR=$(echo $LATEST_TAG | cut -d'.' -f1 | sed 's/v//') # v1.0.0 から v を削除
+            MINOR=$(echo $LATEST_TAG | cut -d'.' -f2)
+            PATCH=$(echo $LATEST_TAG | cut -d'.' -f3)
+
+            # パッチバージョンをインクリメント
+            NEXT_PATCH=$((PATCH + 1))
+            # 新しいバージョン文字列を作成
+            NEXT_VERSION="v${MAJOR}.${MINOR}.${NEXT_PATCH}"
+            echo "最新タグ: $LATEST_TAG"
+            echo "計算された次のバージョン: $NEXT_VERSION"
+          else
+            # タグが一つもない場合、初期バージョンを v1.0.0 とする
+            NEXT_VERSION="v1.0.0"
+            echo "既存のタグが見つかりません。バージョン: $NEXT_VERSION から開始します。"
+          fi
+
+          # 計算された NEXT_VERSION を、次のステップで使えるようにGitHub Actionsの出力にセット
+          echo "NEXT_VERSION=$NEXT_VERSION" >> $GITHUB_OUTPUT
+
+      # 3. GitHub Release を作成する (サードパーティ製アクション)
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1 # リリース作成専用のGitHub Action
+        # 前のステップで NEXT_VERSION が正しく計算された場合のみ実行
+        if: steps.get_version.outputs.NEXT_VERSION != ''
+        with:
+          tag_name: ${{ steps.get_version.outputs.NEXT_VERSION }} # 作成するタグ名 (例: v1.0.0)
+          name: Release ${{ steps.get_version.outputs.NEXT_VERSION }} # リリース名 (GitHub UIで表示される)
+          body: | # リリースノートの本文 (Markdown形式)
+            ## リリースノート ${{ steps.get_version.outputs.NEXT_VERSION }}
+
+            このリリースに含まれる変更:
+
+            * 自動バージョンアップとリリースノート生成のパイプラインを追加しました。
+
+            ---
+            _このリリースはGitHub Actionsによって自動生成されました。_
+          generate_release_notes: true # GitHubに自動でコミット履歴からリリースノートを生成させる
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # GitHubが自動で提供する、リポジトリへの書き込み権限を持つトークン
